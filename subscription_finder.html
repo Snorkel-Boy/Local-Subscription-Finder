@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Local Subscription Finder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f8f8f8; }
+  h1 { color: #333; }
+  input { margin-bottom: 20px; }
+  table { border-collapse: collapse; width: 100%; background: white; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+  th { background: #eee; }
+</style>
+</head>
+<body>
+
+<h1>Local Subscription Finder</h1>
+<p>Upload your exported CSV from Google Sheets:</p>
+<input type="file" id="fileInput" accept=".csv">
+
+<table id="resultsTable" style="display:none;">
+  <thead>
+    <tr>
+      <th>Merchant</th>
+      <th>Amount</th>
+      <th>Frequency (days)</th>
+      <th>Last Payment</th>
+      <th>Next Estimated Payment</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      processData(results.data);
+    }
+  });
+});
+
+function processData(data) {
+  // Normalize dates and amounts
+  data.forEach(row => {
+    row.Date = new Date(row.Date);
+    row.Amount = parseFloat(row.Amount);
+    row.Merchant = row.Merchant.trim();
+  });
+
+  // Group by merchant + amount
+  const groups = {};
+  data.forEach(row => {
+    const key = `${row.Merchant}__${row.Amount}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(row.Date);
+  });
+
+  const subscriptions = [];
+
+  Object.entries(groups).forEach(([key, dates]) => {
+    dates.sort((a, b) => a - b);
+    if (dates.length < 3) return; // Need at least 3 occurrences
+
+    const gaps = [];
+    for (let i = 0; i < dates.length - 1; i++) {
+      gaps.push((dates[i+1] - dates[i]) / (1000 * 60 * 60 * 24)); // days
+    }
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+
+    // Match common subscription intervals
+    const possibleIntervals = [7, 14, 30, 31, 365];
+    if (possibleIntervals.some(x => Math.abs(avgGap - x) < 3)) {
+      const [merchant, amount] = key.split('__');
+      const lastPayment = dates[dates.length - 1];
+      const nextPayment = new Date(lastPayment);
+      nextPayment.setDate(nextPayment.getDate() + Math.round(avgGap));
+
+      subscriptions.push({
+        merchant,
+        amount,
+        avgGap: avgGap.toFixed(1),
+        lastPayment: lastPayment.toISOString().split('T')[0],
+        nextPayment: nextPayment.toISOString().split('T')[0]
+      });
+    }
+  });
+
+  displayResults(subscriptions);
+}
+
+function displayResults(subscriptions) {
+  const table = document.getElementById('resultsTable');
+  const tbody = table.querySelector('tbody');
+  tbody.innerHTML = '';
+
+  subscriptions.forEach(sub => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${sub.merchant}</td>
+      <td>$${sub.amount}</td>
+      <td>${sub.avgGap}</td>
+      <td>${sub.lastPayment}</td>
+      <td>${sub.nextPayment}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  table.style.display = subscriptions.length ? 'table' : 'none';
+}
+</script>
+
+</body>
+</html>
